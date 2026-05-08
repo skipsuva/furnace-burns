@@ -270,8 +270,17 @@ function populateCards(data) {
   }
 }
 
+function fmtTimelineLabel(dtStr) {
+  const d = new Date(dtStr.replace(' ', 'T'));
+  let h = d.getHours();
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'pm' : 'am';
+  h = h % 12 || 12;
+  return `${d.getMonth()+1}/${d.getDate()} ${h}:${min}${ampm}`;
+}
+
 function buildTimeline(data) {
-  const labels = data.map(s => s.start_time.slice(0,16));
+  const labels = data.map(s => fmtTimelineLabel(s.start_time));
   const values = data.map(s => +(s.duration_seconds / 60).toFixed(1));
   return {
     type: 'bar',
@@ -313,8 +322,9 @@ function buildDaily(data) {
     const k = dateKey(s.start_time);
     totals[k] = (totals[k] || 0) + s.duration_seconds;
   });
-  const labels = Object.keys(totals).sort();
-  const values = labels.map(k => +(totals[k] / 3600).toFixed(2));
+  const sortedKeys = Object.keys(totals).sort();
+  const values = sortedKeys.map(k => +(totals[k] / 3600).toFixed(2));
+  const labels = sortedKeys.map(k => { const [y,m,d] = k.split('-'); return `${d}/${m}/${y.slice(2)}`; });
   return {
     type: 'bar',
     data: {

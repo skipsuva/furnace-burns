@@ -79,6 +79,7 @@ def main():
     variance_threshold = cfg["variance_threshold"]
     on_secs = cfg["on_confirmation_seconds"]
     off_secs = cfg["off_confirmation_seconds"]
+    min_burn_secs = cfg["min_burn_seconds"]
 
     spi = spidev.SpiDev()
     spi.open(0, cfg["spi_channel"])
@@ -105,7 +106,12 @@ def main():
             raw = read_mcp3008(spi, 0)
             window.append(raw)
 
-            variance = max(window) - min(window) if len(window) >= 2 else 0
+            if len(window) >= 2:
+                sorted_w = sorted(window)
+                trim = max(1, len(sorted_w) // 20)  # drop top/bottom 5%
+                variance = sorted_w[-trim - 1] - sorted_w[trim]
+            else:
+                variance = 0
             is_active = variance > variance_threshold
 
             now = datetime.now()
@@ -131,12 +137,17 @@ def main():
                     elif (now - candidate_off_since).total_seconds() >= off_secs:
                         # Confirmed OFF
                         end_time = candidate_off_since
-                        duration = append_session(session_id, session_start, end_time)
+                        duration = int((end_time - session_start).total_seconds())
+                        if duration >= min_burn_secs:
+                            append_session(session_id, session_start, end_time)
+                            print(f"[{end_time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                                  f"Furnace OFF — session {session_id}, "
+                                  f"duration {fmt_duration(duration)}")
+                        else:
+                            print(f"[{end_time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                                  f"Ignored short session {session_id} ({duration}s < min_burn_seconds)")
                         state = "IDLE"
                         candidate_off_since = None
-                        print(f"[{end_time.strftime('%Y-%m-%d %H:%M:%S')}] "
-                              f"Furnace OFF — session {session_id}, "
-                              f"duration {fmt_duration(duration)}")
                         session_start = None
                         session_id = None
                 else:

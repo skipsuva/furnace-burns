@@ -7,7 +7,7 @@ Raspberry Pi Zero 2W that detects furnace burn sessions via a current clamp and 
 - Current clamp: SCT-013-000 connected via 3.5mm jack to a breadboard circuit
 - ADC: MCP3008, reading CH0 via SPI
 - Raw signal: ~519–524 when furnace OFF, oscillates ~511–530 when ON
-- Detection uses **peak-to-peak variance** of a rolling sample window, not a simple threshold
+- Detection uses **trimmed range variance** of a rolling sample window (top/bottom 5% of samples dropped before computing range), not a simple threshold
 
 ## Project Structure
 
@@ -38,12 +38,13 @@ journalctl -u furnace-monitor -f         # live logs
 | `spi_channel` | 0 | MCP3008 chip select |
 | `spi_speed_hz` | 1350000 | SPI clock speed |
 | `sample_rate_hz` | 20 | Samples per second |
-| `variance_threshold` | 8 | Min peak-to-peak spread to count as ON |
-| `on_confirmation_seconds` | 3 | Signal must look ON this long before state flips |
-| `off_confirmation_seconds` | 10 | Signal must look OFF this long before state flips |
+| `variance_threshold` | 12 | Min trimmed range to count as ON |
+| `on_confirmation_seconds` | 15 | Signal must look ON this long before state flips |
+| `off_confirmation_seconds` | 20 | Signal must look OFF this long before state flips |
+| `min_burn_seconds` | 60 | Sessions shorter than this are discarded (not written to CSV) |
 | `port` | 8080 | Flask port |
 
-To tune false triggers: increase `variance_threshold` (try 10, 12, 15) or increase `on_confirmation_seconds`. Restart the service after any change — no code edits needed.
+To tune false triggers: increase `variance_threshold` or `min_burn_seconds`. To reduce split sessions (one real burn logged as multiple): increase `off_confirmation_seconds`. Restart the service after any change — no code edits needed.
 
 ## monitor.py
 
@@ -51,9 +52,10 @@ State machine: IDLE → RUNNING → IDLE
 
 - Reads MCP3008 via `spidev`
 - Rolling window = `sample_rate_hz × on_confirmation_seconds` samples
-- Variance = `max(window) - min(window)` (peak-to-peak)
+- Variance = trimmed range: `sorted_window[-5%] - sorted_window[5%]` (robust to single-sample noise spikes)
 - ON confirmed after variance exceeds threshold for `on_confirmation_seconds`
 - OFF confirmed after variance drops below threshold for `off_confirmation_seconds`
+- Sessions shorter than `min_burn_seconds` are discarded (logged to console, not CSV)
 - Completed sessions appended to `burns.csv`
 - session_id auto-increments from last row in CSV
 
