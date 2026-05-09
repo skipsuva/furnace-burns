@@ -2,8 +2,8 @@
   "spi_channel": 0,
   "spi_speed_hz": 1350000,
   "sample_rate_hz": 20,
-  "variance_threshold": 12,
-  "on_confirmation_seconds": 15,
+  "variance_threshold": 8,
+  "on_confirmation_seconds": 8,
   "off_confirmation_seconds": 20,
   "min_burn_seconds": 60,
   "port": 8080
