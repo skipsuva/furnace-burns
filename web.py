@@ -103,6 +103,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Furnace Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -277,6 +278,14 @@ function localDateKey(date) {
   return `${y}-${m}-${d}`;
 }
 
+function allDaysInRange(startKey, endKey) {
+  const days = [];
+  const cur = new Date(startKey);
+  const end = new Date(endKey);
+  while (cur <= end) { days.push(localDateKey(cur)); cur.setDate(cur.getDate() + 1); }
+  return days;
+}
+
 function populateCards(data) {
   const todayKey = localDateKey(new Date());
   const yd = new Date(); yd.setDate(yd.getDate()-1);
@@ -323,18 +332,15 @@ function fmtTimelineLabel(dtStr) {
 
 function buildTimeline(data) {
   timelineData = data;
-  const labels = data.map(s => fmtTimelineLabel(s.start_time));
-  const values = data.map(s => +(s.duration_seconds / 60).toFixed(1));
   return {
     type: 'bar',
     data: {
-      labels,
       datasets: [{
         label: 'Burn duration (min)',
-        data: values,
+        data: data.map(s => ({ x: s.start_time.replace(' ', 'T'), y: +(s.duration_seconds / 60).toFixed(1) })),
         backgroundColor: '#fb923c',
         borderRadius: 3,
-        barPercentage: 0.6,
+        barThickness: 6,
       }]
     },
     options: {
@@ -348,7 +354,12 @@ function buildTimeline(data) {
         },
       },
       scales: {
-        x: { ticks: { color: '#64748b', maxTicksLimit: 10 }, grid: { color: '#1e293b' } },
+        x: {
+          type: 'time',
+          time: { tooltipFormat: 'MMM d, h:mm a', displayFormats: { hour: 'h a', day: 'MMM d', week: 'MMM d' } },
+          ticks: { color: '#64748b', maxTicksLimit: 8 },
+          grid: { color: '#1e293b' },
+        },
         y: { ticks: { color: '#64748b' }, grid: { color: '#334155' }, title: { display: true, text: 'Duration (min)', color: '#64748b' } },
       },
     }
@@ -362,8 +373,9 @@ function buildDaily(data) {
     totals[k] = (totals[k] || 0) + s.duration_seconds;
   });
   const sortedKeys = Object.keys(totals).sort();
-  const values = sortedKeys.map(k => +(totals[k] / 3600).toFixed(2));
-  const labels = sortedKeys.map(k => { const [y,m,d] = k.split('-'); return `${d}/${m}/${y.slice(2)}`; });
+  const days = sortedKeys.length ? allDaysInRange(sortedKeys[0], localDateKey(new Date())) : [];
+  const values = days.map(k => +((totals[k] || 0) / 3600).toFixed(2));
+  const labels = days.map(k => { const [y,m,d] = k.split('-'); return `${+m}/${+d}/${y.slice(2)}`; });
   return {
     type: 'bar',
     data: {
@@ -417,12 +429,13 @@ function applyRange() {
       totals[k] = (totals[k] || 0) + s.duration_seconds;
     });
     const sortedKeys = Object.keys(totals).sort();
-    chart.data.labels = sortedKeys.map(k => { const [y,m,d] = k.split('-'); return `${d}/${m}/${y.slice(2)}`; });
-    chart.data.datasets[0].data = sortedKeys.map(k => +(totals[k] / 3600).toFixed(2));
+    const rangeStart = cutoff || (sortedKeys.length ? sortedKeys[0] : null);
+    const days = rangeStart ? allDaysInRange(rangeStart, localDateKey(new Date())) : [];
+    chart.data.labels = days.map(k => { const [y,m,d] = k.split('-'); return `${+m}/${+d}/${y.slice(2)}`; });
+    chart.data.datasets[0].data = days.map(k => +((totals[k] || 0) / 3600).toFixed(2));
   } else {
     timelineData = data;
-    chart.data.labels = data.map(s => fmtTimelineLabel(s.start_time));
-    chart.data.datasets[0].data = data.map(s => +(s.duration_seconds / 60).toFixed(1));
+    chart.data.datasets[0].data = data.map(s => ({ x: s.start_time.replace(' ', 'T'), y: +(s.duration_seconds / 60).toFixed(1) }));
   }
   chart.update();
 }
