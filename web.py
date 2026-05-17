@@ -185,10 +185,34 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     padding: 48px 0;
     font-size: 0.95rem;
   }
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  .page-header h1 { margin-bottom: 0; }
+  .refresh-btn {
+    background: #1e293b;
+    border: none;
+    border-radius: 8px;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 1.25rem;
+    line-height: 1;
+    padding: 8px 12px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .refresh-btn:hover { background: #334155; color: #e2e8f0; }
+  .refresh-btn.spinning { animation: spin 0.6s linear; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
-<h1>Furnace Monitor</h1>
+<div class="page-header">
+  <h1>Furnace Monitor</h1>
+  <button class="refresh-btn" id="refresh-btn" title="Refresh data" onclick="refresh()">↻</button>
+</div>
 
 <div class="cards" id="cards">
   <div class="card"><div class="card-label">Today</div><div class="card-value" id="c-today">—</div><div class="card-sub" id="c-today-sub"></div></div>
@@ -199,7 +223,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </div>
 
 <div class="controls">
-  <button id="btn-timeline" class="active" onclick="setView('timeline')">Timeline</button>
+  <button id="btn-recent" class="active" onclick="setView('recent')">Recent (3 days)</button>
+  <button id="btn-timeline" onclick="setView('timeline')">Full timeline</button>
   <button id="btn-daily" onclick="setView('daily')">Daily totals</button>
   <button onclick="resetZoom()" style="margin-left:auto">Reset zoom</button>
 </div>
@@ -212,7 +237,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <script>
 let sessions = [];
 let chart = null;
-let currentView = 'timeline';
+let currentView = 'recent';
 
 function fmtDuration(secs) {
   const m = Math.floor(secs / 60), s = secs % 60;
@@ -359,11 +384,21 @@ function buildDaily(data) {
   };
 }
 
+function getViewSessions() {
+  if (currentView === 'recent') {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 3);
+    return sessions.filter(s => new Date(s.start_time.replace(' ', 'T')) >= cutoff);
+  }
+  return sessions;
+}
+
 function renderChart() {
   const noData = document.getElementById('no-data');
   const canvas = document.getElementById('chart');
+  const data = getViewSessions();
 
-  if (!sessions.length) {
+  if (!data.length) {
     noData.style.display = 'block';
     canvas.style.display = 'none';
     return;
@@ -371,13 +406,14 @@ function renderChart() {
   noData.style.display = 'none';
   canvas.style.display = 'block';
 
-  const cfg = currentView === 'timeline' ? buildTimeline(sessions) : buildDaily(sessions);
+  const cfg = currentView === 'daily' ? buildDaily(data) : buildTimeline(data);
   if (chart) chart.destroy();
   chart = new Chart(canvas, cfg);
 }
 
 function setView(view) {
   currentView = view;
+  document.getElementById('btn-recent').classList.toggle('active', view === 'recent');
   document.getElementById('btn-timeline').classList.toggle('active', view === 'timeline');
   document.getElementById('btn-daily').classList.toggle('active', view === 'daily');
   renderChart();
@@ -385,6 +421,13 @@ function setView(view) {
 
 function resetZoom() {
   if (chart) chart.resetZoom();
+}
+
+async function refresh() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  await init();
+  btn.classList.remove('spinning');
 }
 
 async function init() {
