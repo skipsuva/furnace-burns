@@ -25,7 +25,7 @@ def load_config():
 
 
 def load_sessions(days=30):
-    days = min(int(days), 365)
+    days = min(int(days), 730)
     cutoff = datetime.now() - timedelta(days=days)
     sessions = []
     if not CSV_PATH.exists():
@@ -103,8 +103,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Furnace Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -206,6 +204,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .refresh-btn:hover { background: #334155; color: #e2e8f0; }
   .refresh-btn.spinning { animation: spin 0.6s linear; }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .range-controls { display: flex; gap: 2px; margin-bottom: 12px; }
+  .btn-range { font-size: 0.72rem; font-weight: 600; padding: 4px 8px; border-radius: 20px;
+               border: none; cursor: pointer; background: transparent; color: #475569;
+               letter-spacing: 0.02em; }
+  .btn-range:hover:not(.active) { color: #94a3b8; background: transparent; }
+  .btn-range.active { background: #0f172a; color: #38bdf8; }
 </style>
 </head>
 <body>
@@ -226,7 +230,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <button id="btn-recent" class="active" onclick="setView('recent')">Recent (3 days)</button>
   <button id="btn-timeline" onclick="setView('timeline')">Full timeline</button>
   <button id="btn-daily" onclick="setView('daily')">Daily totals</button>
-  <button onclick="resetZoom()" style="margin-left:auto">Reset zoom</button>
+</div>
+<div class="range-controls">
+  <button class="btn-range" data-range="1D" onclick="setRange('1D')">1D</button>
+  <button class="btn-range" data-range="1W" onclick="setRange('1W')">1W</button>
+  <button class="btn-range" data-range="1M" onclick="setRange('1M')">1M</button>
+  <button class="btn-range" data-range="3M" onclick="setRange('3M')">3M</button>
+  <button class="btn-range" data-range="6M" onclick="setRange('6M')">6M</button>
+  <button class="btn-range" data-range="YTD" onclick="setRange('YTD')">YTD</button>
+  <button class="btn-range" data-range="1Y" onclick="setRange('1Y')">1Y</button>
+  <button class="btn-range" data-range="2Y" onclick="setRange('2Y')">2Y</button>
+  <button class="btn-range" data-range="ALL" onclick="setRange('ALL')">ALL</button>
 </div>
 
 <div class="chart-container">
@@ -236,8 +250,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <script>
 let sessions = [];
+let viewSessions = [];
+let timelineData = [];
 let chart = null;
 let currentView = 'recent';
+let currentRange = '1W';
 
 function fmtDuration(secs) {
   const m = Math.floor(secs / 60), s = secs % 60;
@@ -305,6 +322,7 @@ function fmtTimelineLabel(dtStr) {
 }
 
 function buildTimeline(data) {
+  timelineData = data;
   const labels = data.map(s => fmtTimelineLabel(s.start_time));
   const values = data.map(s => +(s.duration_seconds / 60).toFixed(1));
   return {
@@ -325,12 +343,8 @@ function buildTimeline(data) {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            label: ctx => fmtDuration(data[ctx.dataIndex].duration_seconds),
+            label: ctx => fmtDuration(timelineData[ctx.dataIndex].duration_seconds),
           }
-        },
-        zoom: {
-          pan: { enabled: true, mode: 'x' },
-          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
         },
       },
       scales: {
@@ -371,10 +385,6 @@ function buildDaily(data) {
             label: ctx => fmtHours(Math.round(ctx.parsed.y * 3600)),
           }
         },
-        zoom: {
-          pan: { enabled: true, mode: 'x' },
-          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
-        },
       },
       scales: {
         x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } },
@@ -382,6 +392,47 @@ function buildDaily(data) {
       },
     }
   };
+}
+
+function cutoffDateStr(range) {
+  if (range === 'ALL') return null;
+  if (range === 'YTD') return `${new Date().getFullYear()}-01-01`;
+  const days = { '1D': 1, '1W': 7, '1M': 30, '3M': 91, '6M': 182, '1Y': 365, '2Y': 730 };
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days[range]);
+  return localDateKey(cutoff);
+}
+
+function applyRange() {
+  if (!chart) return;
+  const cutoff = cutoffDateStr(currentRange);
+  let data = cutoff
+    ? viewSessions.filter(s => s.start_time.slice(0, 10) >= cutoff)
+    : viewSessions;
+
+  if (currentView === 'daily') {
+    const totals = {};
+    data.forEach(s => {
+      const k = dateKey(s.start_time);
+      totals[k] = (totals[k] || 0) + s.duration_seconds;
+    });
+    const sortedKeys = Object.keys(totals).sort();
+    chart.data.labels = sortedKeys.map(k => { const [y,m,d] = k.split('-'); return `${d}/${m}/${y.slice(2)}`; });
+    chart.data.datasets[0].data = sortedKeys.map(k => +(totals[k] / 3600).toFixed(2));
+  } else {
+    timelineData = data;
+    chart.data.labels = data.map(s => fmtTimelineLabel(s.start_time));
+    chart.data.datasets[0].data = data.map(s => +(s.duration_seconds / 60).toFixed(1));
+  }
+  chart.update();
+}
+
+function setRange(r) {
+  currentRange = r;
+  document.querySelectorAll('.btn-range').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === r);
+  });
+  applyRange();
 }
 
 function getViewSessions() {
@@ -396,19 +447,21 @@ function getViewSessions() {
 function renderChart() {
   const noData = document.getElementById('no-data');
   const canvas = document.getElementById('chart');
-  const data = getViewSessions();
+  viewSessions = getViewSessions();
 
-  if (!data.length) {
+  if (!viewSessions.length) {
     noData.style.display = 'block';
     canvas.style.display = 'none';
+    if (chart) { chart.destroy(); chart = null; }
     return;
   }
   noData.style.display = 'none';
   canvas.style.display = 'block';
 
-  const cfg = currentView === 'daily' ? buildDaily(data) : buildTimeline(data);
+  const cfg = currentView === 'daily' ? buildDaily(viewSessions) : buildTimeline(viewSessions);
   if (chart) chart.destroy();
   chart = new Chart(canvas, cfg);
+  applyRange();
 }
 
 function setView(view) {
@@ -417,10 +470,6 @@ function setView(view) {
   document.getElementById('btn-timeline').classList.toggle('active', view === 'timeline');
   document.getElementById('btn-daily').classList.toggle('active', view === 'daily');
   renderChart();
-}
-
-function resetZoom() {
-  if (chart) chart.resetZoom();
 }
 
 async function refresh() {
@@ -432,13 +481,14 @@ async function refresh() {
 
 async function init() {
   try {
-    const res = await fetch('/api/burns?days=30');
+    const res = await fetch('/api/burns?days=730');
     const json = await res.json();
     sessions = json.sessions || [];
   } catch (e) {
     sessions = [];
   }
   populateCards(sessions);
+  setRange(currentRange);
   renderChart();
 }
 
